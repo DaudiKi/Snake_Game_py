@@ -218,6 +218,38 @@ class SnakeGame:
         self.leaderboard = self.leaderboard[:GAME_TUNING["leaderboard_size"]]
         self._save_leaderboard()
     
+    def reset_leaderboard(self) -> None:
+        """Reset the leaderboard/scorecards"""
+        self.leaderboard = []
+        self._save_leaderboard()
+        print("Leaderboard has been reset!")
+    
+    def _eat_concurrent_food(self, food: Food) -> None:
+        """Handle concurrent food consumption (golden food from rotten food)"""
+        if food.type == FoodType.GOLDEN:
+            self.score += 3
+            self._play_sound("golden")
+        
+        self.food_eaten += 1
+        
+        # Update speed with more gradual progression
+        if FEATURES["speed_scales_with_eats"]:
+            # More gradual speed increase - starts slow, accelerates more slowly
+            speed_increase = self.food_eaten * GAME_TUNING["speed_step_per_food"]
+            # Add a small bonus for higher scores to make it more challenging
+            if self.food_eaten > 10:
+                speed_increase += (self.food_eaten - 10) * 0.1
+            
+            self.speed = min(
+                GAME_TUNING["speed_max"],
+                GAME_TUNING["speed_base"] + speed_increase
+            )
+        
+        # Spawn obstacles
+        if (FEATURES["progressive_obstacles"] and 
+            self.food_eaten % GAME_TUNING["obstacle_every_n_foods"] == 0):
+            self.spawn_obstacle()
+    
     def reset(self) -> None:
         """Reset the game to initial state"""
         # Snake starts in the center
@@ -240,6 +272,7 @@ class SnakeGame:
         # Food and obstacles
         self.food = None
         self.obstacles: Set[Tuple[int, int]] = set()
+        self.concurrent_foods = []  # For concurrent food spawning
         
         # Spawn initial food
         self.spawn_food()
@@ -251,6 +284,7 @@ class SnakeGame:
         self.tongue_out = False
         self.waiting_for_initials = False
         self.player_initials = ""
+        self.concurrent_foods = []
     
     def spawn_food(self) -> None:
         """Spawn food at a random empty position"""
@@ -278,6 +312,31 @@ class SnakeGame:
         is_moving = FEATURES["moving_food"] and random.random() < 0.3
         
         self.food = Food(pos, food_type, is_moving)
+    
+    def _spawn_concurrent_food(self) -> None:
+        """Spawn normal and golden food when rotten food is eaten"""
+        # Spawn normal food
+        self.spawn_food()
+        
+        # Spawn golden food at a different position
+        while True:
+            pos = (
+                random.randint(0, GRID_SIZE - 1),
+                random.randint(0, GRID_SIZE - 1)
+            )
+            if (pos not in self.snake and 
+                pos not in self.obstacles and 
+                (self.food is None or pos != self.food.pos)):
+                break
+        
+        # Create golden food
+        is_moving = FEATURES["moving_food"] and random.random() < 0.3
+        golden_food = Food(pos, FoodType.GOLDEN, is_moving)
+        
+        # Store the golden food as a special concurrent food
+        if not hasattr(self, 'concurrent_foods'):
+            self.concurrent_foods = []
+        self.concurrent_foods.append(golden_food)
     
     def spawn_obstacle(self) -> None:
         """Spawn an obstacle at a valid position"""
@@ -360,9 +419,20 @@ class SnakeGame:
         self.snake.appendleft(new_head)
         
         # Check food collision
+        food_eaten = False
         if self.food and new_head == self.food.pos:
             self._eat_food()
-        else:
+            food_eaten = True
+        
+        # Check concurrent food collision
+        for i, concurrent_food in enumerate(self.concurrent_foods):
+            if new_head == concurrent_food.pos:
+                self._eat_concurrent_food(concurrent_food)
+                self.concurrent_foods.pop(i)
+                food_eaten = True
+                break
+        
+        if not food_eaten:
             self.snake.pop()
     
     def _eat_food(self) -> None:
@@ -385,6 +455,10 @@ class SnakeGame:
             # Shrink snake if possible
             if len(self.snake) > GAME_TUNING["min_snake_len"]:
                 self.snake.pop()
+            
+            # When rotten food is eaten, spawn normal and golden food concurrently
+            self._spawn_concurrent_food()
+            return  # Skip normal food spawning since we handled it above
         
         self.food_eaten += 1
         
@@ -479,12 +553,7 @@ class SnakeGame:
         
         self.screen.blit(gradient_surface, (0, 0))
         
-        # Draw subtle grid lines
-        grid_color = (255, 255, 255, 30)  # Semi-transparent white
-        for x in range(0, WINDOW_SIZE, GAME_TUNING["grid_cell"]):
-            pygame.draw.line(self.screen, grid_color, (x, 0), (x, WINDOW_SIZE))
-        for y in range(0, WINDOW_SIZE, GAME_TUNING["grid_cell"]):
-            pygame.draw.line(self.screen, grid_color, (0, y), (WINDOW_SIZE, y))
+        # Grid lines removed as requested
     
     def _draw_snake_head(self, head_pos: Tuple[int, int], direction: Tuple[int, int], color: Tuple[int, int, int]) -> None:
         """Draw snake head with eyes and tongue"""
@@ -673,6 +742,10 @@ class SnakeGame:
                 elif event.key == pygame.K_r and self.game_over and not self.waiting_for_initials:
                     self.reset()
                 
+                elif event.key == pygame.K_l and not self.game_over and not self.paused:
+                    # Reset leaderboard with L key during gameplay
+                    self.reset_leaderboard()
+                
                 elif event.key == pygame.K_SPACE and not self.game_over and not self.paused:
                     self.paused = not self.paused
                 
@@ -746,6 +819,10 @@ class SnakeGame:
         if self.food:
             self._draw_glowing_food(self.food)
         
+        # Draw concurrent foods (golden food from rotten food consumption)
+        for concurrent_food in self.concurrent_foods:
+            self._draw_glowing_food(concurrent_food)
+        
         # Draw score
         score_text = self.font.render(f"Score: {self.score}", True, WHITE)
         self.screen.blit(score_text, (10, 10))
@@ -753,6 +830,11 @@ class SnakeGame:
         # Draw speed
         speed_text = self.small_font.render(f"Speed: {self.speed:.1f}", True, WHITE)
         self.screen.blit(speed_text, (10, 50))
+        
+        # Draw concurrent food count
+        if self.concurrent_foods:
+            concurrent_text = self.small_font.render(f"Golden Foods: {len(self.concurrent_foods)}", True, WHITE)
+            self.screen.blit(concurrent_text, (10, 80))
         
         # Draw pause indicator
         if self.paused:
@@ -823,6 +905,11 @@ class SnakeGame:
             restart_text = self.small_font.render("Press R to restart, ESC to quit", True, WHITE)
             restart_rect = restart_text.get_rect(center=(WINDOW_SIZE//2, WINDOW_SIZE//2 + 20))
             self.screen.blit(restart_text, restart_rect)
+            
+            # Leaderboard reset instruction
+            reset_text = self.small_font.render("Press L during gameplay to reset leaderboard", True, WHITE)
+            reset_rect = reset_text.get_rect(center=(WINDOW_SIZE//2, WINDOW_SIZE//2 + 50))
+            self.screen.blit(reset_text, reset_rect)
         
         # Draw leaderboard
         if FEATURES["leaderboard"] and self.leaderboard:
