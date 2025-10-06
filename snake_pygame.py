@@ -225,10 +225,13 @@ class SnakeGame:
         print("Leaderboard has been reset!")
     
     def _eat_concurrent_food(self, food: Food) -> None:
-        """Handle concurrent food consumption (golden food from rotten food)"""
+        """Handle concurrent food consumption (normal or golden food from rotten food)"""
         if food.type == FoodType.GOLDEN:
             self.score += 3
             self._play_sound("golden")
+        elif food.type == FoodType.NORMAL:
+            self.score += 1
+            self._play_sound("eat")
         
         self.food_eaten += 1
         
@@ -292,6 +295,9 @@ class SnakeGame:
         if FEATURES["special_food"] and random.random() < GAME_TUNING["special_spawn_chance"]:
             if random.random() < GAME_TUNING["rotten_ratio_within_special"]:
                 food_type = FoodType.ROTTEN
+                # When rotten food spawns, also spawn a normal food
+                self._spawn_rotten_with_normal()
+                return
             else:
                 food_type = FoodType.GOLDEN
         else:
@@ -312,6 +318,41 @@ class SnakeGame:
         is_moving = FEATURES["moving_food"] and random.random() < 0.3
         
         self.food = Food(pos, food_type, is_moving)
+    
+    def _spawn_rotten_with_normal(self) -> None:
+        """Spawn rotten food and normal food at the same time"""
+        # Spawn rotten food
+        while True:
+            pos = (
+                random.randint(0, GRID_SIZE - 1),
+                random.randint(0, GRID_SIZE - 1)
+            )
+            if (pos not in self.snake and 
+                pos not in self.obstacles and 
+                (self.food is None or pos != self.food.pos)):
+                break
+        
+        is_moving = FEATURES["moving_food"] and random.random() < 0.3
+        self.food = Food(pos, FoodType.ROTTEN, is_moving)
+        
+        # Spawn normal food at a different position
+        while True:
+            pos = (
+                random.randint(0, GRID_SIZE - 1),
+                random.randint(0, GRID_SIZE - 1)
+            )
+            if (pos not in self.snake and 
+                pos not in self.obstacles and 
+                (self.food is None or pos != self.food.pos)):
+                break
+        
+        # Create normal food as concurrent food
+        if not hasattr(self, 'concurrent_foods'):
+            self.concurrent_foods = []
+        
+        is_moving_normal = FEATURES["moving_food"] and random.random() < 0.3
+        normal_food = Food(pos, FoodType.NORMAL, is_moving_normal)
+        self.concurrent_foods.append(normal_food)
     
     def _spawn_concurrent_food(self) -> None:
         """Spawn normal and golden food when rotten food is eaten"""
@@ -749,6 +790,10 @@ class SnakeGame:
                 elif event.key == pygame.K_SPACE and not self.game_over and not self.paused:
                     self.paused = not self.paused
                 
+                elif event.key == pygame.K_p and not self.game_over:
+                    # Pause/unpause with P key
+                    self.paused = not self.paused
+                
                 elif self.waiting_for_initials:
                     # Handle initials input
                     if event.key == pygame.K_RETURN:
@@ -833,14 +878,28 @@ class SnakeGame:
         
         # Draw concurrent food count
         if self.concurrent_foods:
-            concurrent_text = self.small_font.render(f"Golden Foods: {len(self.concurrent_foods)}", True, WHITE)
-            self.screen.blit(concurrent_text, (10, 80))
+            # Count different types of concurrent foods
+            normal_count = sum(1 for food in self.concurrent_foods if food.type == FoodType.NORMAL)
+            golden_count = sum(1 for food in self.concurrent_foods if food.type == FoodType.GOLDEN)
+            
+            if normal_count > 0:
+                normal_text = self.small_font.render(f"Normal Foods: {normal_count}", True, WHITE)
+                self.screen.blit(normal_text, (10, 80))
+            if golden_count > 0:
+                golden_text = self.small_font.render(f"Golden Foods: {golden_count}", True, WHITE)
+                y_offset = 80 if normal_count > 0 else 80
+                self.screen.blit(golden_text, (10, y_offset + 20))
         
         # Draw pause indicator
         if self.paused:
             pause_text = self.font.render("PAUSED", True, WHITE)
             text_rect = pause_text.get_rect(center=(WINDOW_SIZE//2, WINDOW_SIZE//2))
             self.screen.blit(pause_text, text_rect)
+            
+            # Show pause instructions
+            pause_instructions = self.small_font.render("Press P or SPACE to unpause", True, WHITE)
+            instructions_rect = pause_instructions.get_rect(center=(WINDOW_SIZE//2, WINDOW_SIZE//2 + 40))
+            self.screen.blit(pause_instructions, instructions_rect)
         
         # Draw game over overlay
         if self.game_over:
