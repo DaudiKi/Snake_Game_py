@@ -185,6 +185,16 @@ This project is open source and available under the MIT License.
 
 Feel free to submit issues, feature requests, or pull requests to improve the game!
 
+## Contributors
+
+This project was developed by:
+
+- **Daudi Kirabo Makumbi Mawejje** - 189657
+- **Aditya More** - 193384
+- **Namara Joshua** – 192582
+- **Agolor Blessing** – 223251
+- **Ahmed Hussain** - 193285
+
 ---
 
 Enjoy playing the Advanced Snake Game! 🐍
